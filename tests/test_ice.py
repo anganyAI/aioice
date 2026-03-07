@@ -1406,7 +1406,8 @@ class IceRestartTest(unittest.TestCase):
 
 
 class IceRoleOverrideTest(unittest.TestCase):
-    def test_set_ice_controlling(self) -> None:
+    @asynctest
+    async def test_set_ice_controlling(self) -> None:
         conn = ice.Connection(ice_controlling=False)
         self.assertFalse(conn.ice_controlling)
 
@@ -1418,11 +1419,13 @@ class IceRoleOverrideTest(unittest.TestCase):
 
 
 class IceNominationStrategyTest(unittest.TestCase):
-    def test_default_is_aggressive(self) -> None:
+    @asynctest
+    async def test_default_is_aggressive(self) -> None:
         conn = ice.Connection(ice_controlling=True)
         self.assertEqual(conn._nomination_strategy, "aggressive")
 
-    def test_regular_nomination(self) -> None:
+    @asynctest
+    async def test_regular_nomination(self) -> None:
         conn = ice.Connection(ice_controlling=True, nomination_strategy="regular")
         self.assertEqual(conn._nomination_strategy, "regular")
 
