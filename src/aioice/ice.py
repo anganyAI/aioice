@@ -360,6 +360,8 @@ class Connection:
                            will be generated.
     :param local_password: An optional local password, otherwise a random one
                            will be generated.
+    :param nomination_strategy: The nomination strategy to use, either
+                                ``"aggressive"`` or ``"regular"``.
     """
 
     def __init__(
@@ -377,8 +379,10 @@ class Connection:
         transport_policy: TransportPolicy = TransportPolicy.ALL,
         local_username: Optional[str] = None,
         local_password: Optional[str] = None,
+        nomination_strategy: str = "aggressive",
     ) -> None:
         self.ice_controlling = ice_controlling
+        self._nomination_strategy = nomination_strategy
 
         if local_username is None:
             local_username = random_string(4)
@@ -611,6 +615,58 @@ class Connection:
 
         # start consent freshness tests
         self._query_consent_task = asyncio.create_task(self.query_consent())
+
+    def restart(self, remote_username: str, remote_password: str) -> None:
+        """
+        Prepare for ICE restart with new remote credentials.
+
+        Resets the ICE state machine while preserving local transports
+        (UDP sockets and TURN allocations). After calling this:
+
+        1. Add new remote candidates with :meth:`add_remote_candidate`.
+        2. Call :meth:`connect` to run new connectivity checks.
+
+        :param remote_username: The new remote username.
+        :param remote_password: The new remote password.
+        """
+        # cancel consent freshness
+        if self._query_consent_task and not self._query_consent_task.done():
+            self._query_consent_task.cancel()
+            self._query_consent_task = None
+
+        # cancel in-progress checks
+        for pair in self._check_list:
+            if pair.task and not pair.task.done():
+                pair.task.cancel()
+
+        # reset check list state machine
+        self._check_list.clear()
+        self._check_list_done = False
+        self._check_list_state = asyncio.Queue()
+        self._nominated.clear()
+        self._nominating.clear()
+        self._early_checks.clear()
+        self._early_checks_done = False
+
+        # set new remote credentials
+        self.remote_username = remote_username
+        self.remote_password = remote_password
+
+        # clear remote candidates (must be re-added)
+        self._remote_candidates.clear()
+        self._remote_candidates_end = False
+
+        # drain stale data from old session
+        while not self._queue.empty():
+            self._queue.get_nowait()
+
+    def set_ice_controlling(self, controlling: bool) -> None:
+        """
+        Override the ICE role.
+
+        :param controlling: Whether the local peer has the controlling role.
+        """
+        self.ice_controlling = controlling
 
     async def close(self) -> None:
         """
@@ -883,7 +939,10 @@ class Connection:
         """
         self.check_state(pair, CandidatePair.State.IN_PROGRESS)
 
-        nominate = self.ice_controlling and not self.remote_is_lite
+        if self._nomination_strategy == "aggressive":
+            nominate = self.ice_controlling and not self.remote_is_lite
+        else:
+            nominate = False
         request = self.build_request(pair, nominate=nominate)
         try:
             response, addr = await pair.protocol.request(

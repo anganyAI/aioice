@@ -15,9 +15,20 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CHANNEL_REFRESH_TIME = 500
 DEFAULT_ALLOCATION_LIFETIME = 600
+MAX_REDIRECTS = 5
 TCP_TRANSPORT = 0x06000000
 UDP_TRANSPORT = 0x11000000
 UDP_SOCKET_BUFFER_SIZE = 262144
+
+
+class TurnRedirect(Exception):
+    """Raised when a TURN server responds with 300 Try Alternate."""
+
+    def __init__(self, alternate_server: tuple[str, int]) -> None:
+        self.alternate_server = alternate_server
+        super().__init__(
+            f"TURN server redirected to {alternate_server[0]}:{alternate_server[1]}"
+        )
 
 _ProtocolT = TypeVar("_ProtocolT", bound=asyncio.DatagramProtocol)
 
@@ -234,7 +245,11 @@ class TurnClientMixin:
             response, addr = await self.request(request)
         except stun.TransactionFailed as e:
             error_code = e.response.attributes["ERROR-CODE"][0]
-            if (
+            if error_code == 300 and "ALTERNATE-SERVER" in e.response.attributes:
+                raise TurnRedirect(
+                    e.response.attributes["ALTERNATE-SERVER"]
+                ) from e
+            elif (
                 "NONCE" in e.response.attributes
                 and self.username is not None
                 and self.password is not None
@@ -391,22 +406,17 @@ class TurnTransport:
         protocol.connection_made(cast(asyncio.DatagramTransport, self))
 
 
-async def create_turn_endpoint(
-    protocol_factory: Callable[[], _ProtocolT],
+async def _create_inner_transport(
+    loop: asyncio.AbstractEventLoop,
     server_addr: tuple[str, int],
     username: Optional[str],
     password: Optional[str],
-    lifetime: int = DEFAULT_ALLOCATION_LIFETIME,
-    channel_refresh_time: int = DEFAULT_CHANNEL_REFRESH_TIME,
-    ssl: Optional[Union[bool, ssl.SSLContext]] = None,
-    transport: str = "udp",
-) -> tuple[TurnTransport, _ProtocolT]:
-    """
-    Create datagram connection relayed over TURN.
-    """
-    loop = asyncio.get_event_loop()
+    lifetime: int,
+    channel_refresh_time: int,
+    ssl_context: Optional[Union[bool, ssl.SSLContext]],
+    transport: str,
+) -> tuple[asyncio.BaseTransport, TurnClientProtocol]:
     inner_protocol: TurnClientProtocol
-    inner_transport: asyncio.BaseTransport
     if transport == "tcp":
         inner_transport, inner_protocol = await loop.create_connection(
             lambda: TurnClientTcpProtocol(
@@ -418,7 +428,7 @@ async def create_turn_endpoint(
             ),
             host=server_addr[0],
             port=server_addr[1],
-            ssl=ssl,
+            ssl=ssl_context,
         )
     else:
         inner_transport, inner_protocol = await loop.create_datagram_endpoint(
@@ -434,13 +444,47 @@ async def create_turn_endpoint(
         sock = inner_transport.get_extra_info("socket")
         if sock is not None:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_SOCKET_BUFFER_SIZE)
+    return inner_transport, inner_protocol
 
-    try:
-        protocol = protocol_factory()
-        turn_transport = TurnTransport(inner_protocol)
-        await turn_transport._connect(protocol)
-    except Exception:
-        inner_transport.close()
-        raise
 
-    return turn_transport, protocol
+async def create_turn_endpoint(
+    protocol_factory: Callable[[], _ProtocolT],
+    server_addr: tuple[str, int],
+    username: Optional[str],
+    password: Optional[str],
+    lifetime: int = DEFAULT_ALLOCATION_LIFETIME,
+    channel_refresh_time: int = DEFAULT_CHANNEL_REFRESH_TIME,
+    ssl: Optional[Union[bool, ssl.SSLContext]] = None,
+    transport: str = "udp",
+) -> tuple[TurnTransport, _ProtocolT]:
+    """
+    Create datagram connection relayed over TURN.
+    """
+    loop = asyncio.get_event_loop()
+
+    for _ in range(MAX_REDIRECTS + 1):
+        inner_transport, inner_protocol = await _create_inner_transport(
+            loop, server_addr, username, password,
+            lifetime, channel_refresh_time, ssl, transport,
+        )
+
+        try:
+            protocol = protocol_factory()
+            turn_transport = TurnTransport(inner_protocol)
+            await turn_transport._connect(protocol)
+        except TurnRedirect as e:
+            inner_transport.close()
+            logger.info(
+                "TURN server redirected from %s to %s",
+                server_addr,
+                e.alternate_server,
+            )
+            server_addr = e.alternate_server
+            continue
+        except Exception:
+            inner_transport.close()
+            raise
+
+        return turn_transport, protocol
+
+    raise stun.TransactionError("Too many TURN redirects")

@@ -1271,6 +1271,210 @@ class IceConnectionTest(unittest.TestCase):
         self.assertEqual(repr(conn), "Connection(1)")
 
 
+class IceRestartTest(unittest.TestCase):
+    @asynctest
+    async def test_restart_resets_state(self) -> None:
+        conn = ice.Connection(ice_controlling=True)
+        conn.remote_username = "old-user"
+        conn.remote_password = "old-password-that-is-long"
+
+        # simulate some state from a completed connection
+        conn._check_list_done = True
+        conn._early_checks_done = True
+        conn._remote_candidates_end = True
+        conn._remote_candidates.append(
+            Candidate(
+                foundation="f",
+                component=1,
+                transport="udp",
+                priority=100,
+                host="1.2.3.4",
+                port=1234,
+                type="host",
+            )
+        )
+        conn._nominated[1] = ice.CandidatePair(
+            ProtocolMock(response_addr=("1.2.3.4", 1234)),
+            conn._remote_candidates[0],
+        )
+        conn._nominating.add(1)
+
+        # restart
+        conn.restart("new-user-abcd", "new-password-that-is-long")
+
+        # verify state was reset
+        self.assertEqual(conn.remote_username, "new-user-abcd")
+        self.assertEqual(conn.remote_password, "new-password-that-is-long")
+        self.assertEqual(len(conn._check_list), 0)
+        self.assertFalse(conn._check_list_done)
+        self.assertEqual(len(conn._nominated), 0)
+        self.assertEqual(len(conn._nominating), 0)
+        self.assertEqual(len(conn._early_checks), 0)
+        self.assertFalse(conn._early_checks_done)
+        self.assertEqual(len(conn._remote_candidates), 0)
+        self.assertFalse(conn._remote_candidates_end)
+
+    @asynctest
+    async def test_restart_preserves_local_state(self) -> None:
+        conn = ice.Connection(ice_controlling=True)
+        await conn.gather_candidates()
+        local_candidates = conn.local_candidates[:]
+        local_username = conn.local_username
+        local_password = conn.local_password
+        protocols = conn._protocols[:]
+
+        conn.remote_username = "old-user"
+        conn.remote_password = "old-password-that-is-long"
+
+        conn.restart("new-user-abcd", "new-password-that-is-long")
+
+        # local state should be preserved
+        self.assertEqual(conn.local_candidates, local_candidates)
+        self.assertEqual(conn.local_username, local_username)
+        self.assertEqual(conn.local_password, local_password)
+        self.assertEqual(conn._protocols, protocols)
+        self.assertTrue(conn._local_candidates_start)
+        self.assertTrue(conn._local_candidates_end)
+        self.assertTrue(conn.ice_controlling)
+
+        await conn.close()
+
+    @asynctest
+    async def test_restart_allows_new_remote_candidates(self) -> None:
+        conn = ice.Connection(ice_controlling=True)
+        conn.remote_username = "old-user"
+        conn.remote_password = "old-password-that-is-long"
+        conn._remote_candidates_end = True
+
+        # cannot add candidates after end-of-candidates
+        with self.assertRaises(ValueError):
+            await conn.add_remote_candidate(
+                Candidate(
+                    foundation="f",
+                    component=1,
+                    transport="udp",
+                    priority=100,
+                    host="1.2.3.4",
+                    port=1234,
+                    type="host",
+                )
+            )
+
+        # after restart, we can add candidates again
+        conn.restart("new-user-abcd", "new-password-that-is-long")
+        await conn.add_remote_candidate(
+            Candidate(
+                foundation="f",
+                component=1,
+                transport="udp",
+                priority=100,
+                host="1.2.3.4",
+                port=1234,
+                type="host",
+            )
+        )
+        self.assertEqual(len(conn._remote_candidates), 1)
+        await conn.add_remote_candidate(None)
+        self.assertTrue(conn._remote_candidates_end)
+
+    @asynctest
+    async def test_restart_cancels_consent_task(self) -> None:
+        conn = ice.Connection(ice_controlling=True)
+
+        # create a dummy consent task
+        async def dummy_consent() -> None:
+            await asyncio.sleep(3600)
+
+        conn._query_consent_task = asyncio.create_task(dummy_consent())
+
+        conn.restart("new-user-abcd", "new-password-that-is-long")
+
+        self.assertIsNone(conn._query_consent_task)
+
+    @asynctest
+    async def test_restart_drains_queue(self) -> None:
+        conn = ice.Connection(ice_controlling=True)
+
+        # simulate stale data in the queue
+        conn._queue.put_nowait((b"old-data-1", 1))
+        conn._queue.put_nowait((b"old-data-2", 1))
+        self.assertEqual(conn._queue.qsize(), 2)
+
+        conn.restart("new-user-abcd", "new-password-that-is-long")
+
+        self.assertTrue(conn._queue.empty())
+
+
+class IceRoleOverrideTest(unittest.TestCase):
+    def test_set_ice_controlling(self) -> None:
+        conn = ice.Connection(ice_controlling=False)
+        self.assertFalse(conn.ice_controlling)
+
+        conn.set_ice_controlling(True)
+        self.assertTrue(conn.ice_controlling)
+
+        conn.set_ice_controlling(False)
+        self.assertFalse(conn.ice_controlling)
+
+
+class IceNominationStrategyTest(unittest.TestCase):
+    def test_default_is_aggressive(self) -> None:
+        conn = ice.Connection(ice_controlling=True)
+        self.assertEqual(conn._nomination_strategy, "aggressive")
+
+    def test_regular_nomination(self) -> None:
+        conn = ice.Connection(ice_controlling=True, nomination_strategy="regular")
+        self.assertEqual(conn._nomination_strategy, "regular")
+
+    @asynctest
+    async def test_aggressive_nomination_sets_use_candidate(self) -> None:
+        conn = ice.Connection(ice_controlling=True, nomination_strategy="aggressive")
+        conn.remote_password = "remote-password-that-is-long"
+        conn.remote_username = "remote-username"
+
+        protocol = ProtocolMock(response_addr=("2.3.4.5", 2345))
+        pair = ice.CandidatePair(
+            protocol,
+            Candidate(
+                foundation="f",
+                component=1,
+                transport="udp",
+                priority=2345,
+                host="2.3.4.5",
+                port=2345,
+                type="host",
+            ),
+        )
+
+        request = conn.build_request(pair, nominate=True)
+        self.assertIn("USE-CANDIDATE", request.attributes)
+
+    @asynctest
+    async def test_regular_nomination_no_use_candidate_initially(self) -> None:
+        conn = ice.Connection(ice_controlling=True, nomination_strategy="regular")
+        conn.remote_password = "remote-password-that-is-long"
+        conn.remote_username = "remote-username"
+
+        protocol = ProtocolMock(response_addr=("2.3.4.5", 2345))
+        pair = ice.CandidatePair(
+            protocol,
+            Candidate(
+                foundation="f",
+                component=1,
+                transport="udp",
+                priority=2345,
+                host="2.3.4.5",
+                port=2345,
+                type="host",
+            ),
+        )
+
+        # with regular nomination, first check should NOT nominate
+        await conn.check_start(pair)
+        # pair should succeed (regular nomination triggers a second request)
+        self.assertEqual(pair.state, ice.CandidatePair.State.SUCCEEDED)
+
+
 class StunProtocolTest(unittest.TestCase):
     @asynctest
     async def test_error_received(self) -> None:

@@ -72,6 +72,34 @@ class AttributeTest(unittest.TestCase):
             )
         self.assertEqual(str(cm.exception), "STUN address has invalid length for IPv6")
 
+    def test_alternate_server_attribute(self) -> None:
+        # pack and unpack ALTERNATE-SERVER
+        addr = ("10.0.0.1", 3478)
+        packed = stun.pack_address(addr)
+        unpacked = stun.unpack_address(packed)
+        self.assertEqual(unpacked, addr)
+
+        # verify it's registered in the attribute registry
+        self.assertIn("ALTERNATE-SERVER", stun.ATTRIBUTES_BY_NAME)
+        self.assertIn(0x8023, stun.ATTRIBUTES_BY_TYPE)
+        entry = stun.ATTRIBUTES_BY_NAME["ALTERNATE-SERVER"]
+        self.assertEqual(entry[0], 0x8023)
+
+    def test_alternate_server_in_message(self) -> None:
+        # build a message with ALTERNATE-SERVER
+        message = stun.Message(
+            message_method=stun.Method.ALLOCATE,
+            message_class=stun.Class.ERROR,
+        )
+        message.attributes["ERROR-CODE"] = (300, "Try Alternate")
+        message.attributes["ALTERNATE-SERVER"] = ("10.0.0.1", 3478)
+
+        # serialize and parse back
+        data = bytes(message)
+        parsed = stun.parse_message(data)
+        self.assertEqual(parsed.attributes["ERROR-CODE"], (300, "Try Alternate"))
+        self.assertEqual(parsed.attributes["ALTERNATE-SERVER"], ("10.0.0.1", 3478))
+
     def test_unpack_xor_address_too_short(self) -> None:
         transaction_id = unhexlify("b7e7a701bc34d686fa87dfae")
         with self.assertRaises(ValueError) as cm:

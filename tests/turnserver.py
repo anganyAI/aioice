@@ -125,6 +125,19 @@ class TurnServerMixin:
             self.send_stun(response, addr)
             return
 
+        # Generate 300 redirect for test purposes.
+        if self.server.simulated_redirect:
+            response = stun.Message(
+                message_method=message.message_method,
+                message_class=stun.Class.ERROR,
+                transaction_id=message.transaction_id,
+            )
+            response.attributes["ERROR-CODE"] = (300, "Try Alternate")
+            response.attributes["ALTERNATE-SERVER"] = self.server.simulated_redirect
+            self.server.simulated_redirect = None
+            self.send_stun(response, addr)
+            return
+
         # Generate failure for test purposes.
         if self.server.simulated_failure:
             response = self.error_response(message, *self.server.simulated_failure)
@@ -355,6 +368,7 @@ class TurnServer:
         self.maximum_lifetime = 3600
         self.realm = realm
         self.simulated_failure: Optional[tuple[int, str]] = None
+        self.simulated_redirect: Optional[Address] = None
         self.users = users
 
         self._expire_task: Optional[asyncio.Task[None]] = None

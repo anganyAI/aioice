@@ -178,6 +178,7 @@ ATTRIBUTES: list[AttributeEntry] = [
     (0x0024, "PRIORITY", pack_unsigned, unpack_unsigned),
     (0x0025, "USE-CANDIDATE", pack_none, unpack_none),
     (0x8022, "SOFTWARE", pack_string, unpack_string),
+    (0x8023, "ALTERNATE-SERVER", pack_address, unpack_address),
     (0x8028, "FINGERPRINT", pack_unsigned, unpack_unsigned),
     (0x8029, "ICE-CONTROLLED", pack_unsigned_64, unpack_unsigned_64),
     (0x802A, "ICE-CONTROLLING", pack_unsigned_64, unpack_unsigned_64),

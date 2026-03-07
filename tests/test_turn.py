@@ -62,6 +62,112 @@ class TurnClientUdpProtocolTest(unittest.TestCase):
         self.assertEqual(repr(self.protocol), "turn/udp")
 
 
+class TurnTryAlternateTest(unittest.TestCase):
+    @asynctest
+    async def test_300_try_alternate_raises_redirect(self) -> None:
+        """Test that TURN 300 Try Alternate raises TurnRedirect."""
+
+        class MockTurnClient(turn.TurnClientMixin):
+            def __init__(self) -> None:
+                super().__init__(
+                    server=("1.2.3.4", 3478),
+                    username="foo",
+                    password="bar",
+                    lifetime=600,
+                    channel_refresh_time=500,
+                )
+
+            async def request(
+                self, request: stun.Message
+            ) -> tuple[stun.Message, tuple[str, int]]:
+                error_response = stun.Message(
+                    message_method=request.message_method,
+                    message_class=stun.Class.ERROR,
+                    transaction_id=request.transaction_id,
+                )
+                error_response.attributes["ERROR-CODE"] = (300, "Try Alternate")
+                error_response.attributes["ALTERNATE-SERVER"] = ("5.6.7.8", 3478)
+                raise stun.TransactionFailed(error_response)
+
+            def send_stun(
+                self, message: stun.Message, addr: tuple[str, int]
+            ) -> None:
+                pass
+
+        client = MockTurnClient()
+        request = stun.Message(
+            message_method=stun.Method.ALLOCATE,
+            message_class=stun.Class.REQUEST,
+        )
+
+        with self.assertRaises(turn.TurnRedirect) as cm:
+            await client.request_with_retry(request)
+        self.assertEqual(cm.exception.alternate_server, ("5.6.7.8", 3478))
+
+    @asynctest
+    async def test_300_without_alternate_server_raises(self) -> None:
+        """300 without ALTERNATE-SERVER should raise TransactionFailed."""
+
+        class MockTurnClient(turn.TurnClientMixin):
+            def __init__(self) -> None:
+                super().__init__(
+                    server=("1.2.3.4", 3478),
+                    username="foo",
+                    password="bar",
+                    lifetime=600,
+                    channel_refresh_time=500,
+                )
+
+            async def request(
+                self, request: stun.Message
+            ) -> tuple[stun.Message, tuple[str, int]]:
+                error_response = stun.Message(
+                    message_method=request.message_method,
+                    message_class=stun.Class.ERROR,
+                    transaction_id=request.transaction_id,
+                )
+                error_response.attributes["ERROR-CODE"] = (300, "Try Alternate")
+                # No ALTERNATE-SERVER attribute
+                raise stun.TransactionFailed(error_response)
+
+            def send_stun(
+                self, message: stun.Message, addr: tuple[str, int]
+            ) -> None:
+                pass
+
+        client = MockTurnClient()
+        request = stun.Message(
+            message_method=stun.Method.ALLOCATE,
+            message_class=stun.Class.REQUEST,
+        )
+
+        with self.assertRaises(stun.TransactionFailed):
+            await client.request_with_retry(request)
+
+    @asynctest
+    async def test_300_redirect_with_real_server(self) -> None:
+        """Test 300 redirect handled by create_turn_endpoint with real servers."""
+        async with run_turn_server(users={"foo": "bar"}) as real_server:
+            # Create a redirecting front server
+            async with run_turn_server(users={"foo": "bar"}) as front_server:
+                # Make the front server respond with 300 on the next request
+                front_server.simulated_redirect = real_server.udp_address
+
+                turn_transport, protocol = await turn.create_turn_endpoint(
+                    DummyClientProtocol,
+                    server_addr=front_server.udp_address,
+                    username="foo",
+                    password="bar",
+                    transport="udp",
+                )
+
+                # The allocation should be on the real server
+                self.assertIsNotNone(turn_transport.get_extra_info("sockname"))
+
+                turn_transport.close()
+                await asyncio.sleep(0)
+
+
 class TurnTest(unittest.TestCase):
     @asynctest
     async def test_tcp_transport(self) -> None:
