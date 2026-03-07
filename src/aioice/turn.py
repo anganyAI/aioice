@@ -416,6 +416,7 @@ async def _create_inner_transport(
     transport: str,
 ) -> tuple[asyncio.BaseTransport, TurnClientProtocol]:
     inner_protocol: TurnClientProtocol
+    inner_transport: asyncio.BaseTransport
     if transport == "tcp":
         inner_transport, inner_protocol = await loop.create_connection(
             lambda: TurnClientTcpProtocol(
