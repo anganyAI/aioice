@@ -30,6 +30,7 @@ class TurnRedirect(Exception):
             f"TURN server redirected to {alternate_server[0]}:{alternate_server[1]}"
         )
 
+
 _ProtocolT = TypeVar("_ProtocolT", bound=asyncio.DatagramProtocol)
 
 
@@ -246,9 +247,7 @@ class TurnClientMixin:
         except stun.TransactionFailed as e:
             error_code = e.response.attributes["ERROR-CODE"][0]
             if error_code == 300 and "ALTERNATE-SERVER" in e.response.attributes:
-                raise TurnRedirect(
-                    e.response.attributes["ALTERNATE-SERVER"]
-                ) from e
+                raise TurnRedirect(e.response.attributes["ALTERNATE-SERVER"]) from e
             elif (
                 "NONCE" in e.response.attributes
                 and self.username is not None
@@ -464,8 +463,14 @@ async def create_turn_endpoint(
 
     for _ in range(MAX_REDIRECTS + 1):
         inner_transport, inner_protocol = await _create_inner_transport(
-            loop, server_addr, username, password,
-            lifetime, channel_refresh_time, ssl, transport,
+            loop,
+            server_addr,
+            username,
+            password,
+            lifetime,
+            channel_refresh_time,
+            ssl,
+            transport,
         )
 
         try:

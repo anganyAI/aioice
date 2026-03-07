@@ -89,9 +89,7 @@ class TurnTryAlternateTest(unittest.TestCase):
                 error_response.attributes["ALTERNATE-SERVER"] = ("5.6.7.8", 3478)
                 raise stun.TransactionFailed(error_response)
 
-            def send_stun(
-                self, message: stun.Message, addr: tuple[str, int]
-            ) -> None:
+            def send_stun(self, message: stun.Message, addr: tuple[str, int]) -> None:
                 pass
 
         client = MockTurnClient()
@@ -130,9 +128,7 @@ class TurnTryAlternateTest(unittest.TestCase):
                 # No ALTERNATE-SERVER attribute
                 raise stun.TransactionFailed(error_response)
 
-            def send_stun(
-                self, message: stun.Message, addr: tuple[str, int]
-            ) -> None:
+            def send_stun(self, message: stun.Message, addr: tuple[str, int]) -> None:
                 pass
 
         client = MockTurnClient()
