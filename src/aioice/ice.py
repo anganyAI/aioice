@@ -660,6 +660,22 @@ class Connection:
         while not self._queue.empty():
             self._queue.get_nowait()
 
+    def update_remote_credentials(self, remote_username: str, remote_password: str) -> None:
+        """
+        Update the remote ICE credentials without restarting ICE.
+
+        Use this when the remote peer sends new credentials via signaling
+        (e.g. media renegotiation) but the existing transport should stay
+        alive.  Unlike :meth:`restart`, this preserves the nominated pairs,
+        check list, and candidates — only the credentials used for STUN
+        integrity (consent freshness checks) are updated.
+
+        :param remote_username: The new remote username fragment.
+        :param remote_password: The new remote password.
+        """
+        self.remote_username = remote_username
+        self.remote_password = remote_password
+
     def set_ice_controlling(self, controlling: bool) -> None:
         """
         Override the ICE role.
@@ -762,6 +778,13 @@ class Connection:
         """
         active_pair = self._nominated.get(component)
         if active_pair:
+            logger.debug(
+                "%s Sending %d bytes via %s -> %s",
+                self,
+                len(data),
+                active_pair.local_addr,
+                active_pair.remote_addr,
+            )
             await active_pair.protocol.send_data(data, active_pair.remote_addr)
         else:
             raise ConnectionError("Cannot send data, not connected")
@@ -977,6 +1000,10 @@ class Connection:
         if nominate or pair.remote_nominated:
             # nominated by agressive nomination or the remote party
             pair.nominated = True
+        elif self.remote_is_lite and self.ice_controlling:
+            # ICE-lite servers don't reliably respond to USE-CANDIDATE.
+            # Nominate locally without a second STUN round-trip.
+            pair.nominated = True
         elif self.ice_controlling and pair.component not in self._nominating:
             # perform regular nomination
             self.__log_info("Check %s nominating pair", pair)
@@ -1065,12 +1092,14 @@ class Connection:
             )
             if self._transport_policy == TransportPolicy.ALL:
                 candidates.append(protocol.local_candidate)
-        self._protocols += host_protocols
+        if self._transport_policy == TransportPolicy.ALL:
+            self._protocols += host_protocols
 
         tasks: list[asyncio.Task[tuple[Candidate, Optional[StunProtocol]]]] = []
 
         # Query STUN server for server-reflexive candidates (IPv4 only).
-        if self.stun_server:
+        # Skip in RELAY mode — srflx uses host sockets which we excluded.
+        if self.stun_server and self._transport_policy == TransportPolicy.ALL:
             for protocol in host_protocols:
                 if ipaddress.ip_address(protocol.local_candidate.host).version == 4:
                     tasks.append(
@@ -1150,6 +1179,14 @@ class Connection:
                     return await self.close()
 
     def data_received(self, data: Optional[bytes], component: Optional[int]) -> None:
+        if data:
+            logger.debug(
+                "%s Data received: %d bytes (first_byte=0x%02x) component=%s",
+                self,
+                len(data),
+                data[0],
+                component,
+            )
         self._queue.put_nowait((data, component))
 
     def request_received(
