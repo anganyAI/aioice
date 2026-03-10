@@ -1235,8 +1235,9 @@ class IceConnectionTest(unittest.TestCase):
             # invite / accept
             await invite_accept(conn_a, conn_b)
 
-            # we whould only have a server-reflexive candidate in connection a
-            self.assertCandidateTypes(conn_a, set(["srflx"]))
+            # RELAY mode skips host and srflx — with only a STUN server
+            # (no TURN), there are no relay candidates either
+            self.assertCandidateTypes(conn_a, set())
 
             # close
             await conn_a.close()
