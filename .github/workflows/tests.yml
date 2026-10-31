@@ -21,6 +21,8 @@ jobs:
 
   test:
     runs-on: ${{ matrix.os }}
+    # A hung ICE test otherwise holds the runner for six hours.
+    timeout-minutes: 20
     strategy:
       matrix:
         os: [ubuntu-latest, macos-14, windows-latest]
@@ -62,9 +64,3 @@ jobs:
         run: pip install build wheel
       - name: Build package
         run: python -m build
-      - name: Publish package
-        if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/')
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_TOKEN }}
