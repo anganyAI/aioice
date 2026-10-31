@@ -3,6 +3,25 @@ Changelog
 
 .. currentmodule:: aioice
 
+0.10.2+angany.1
+---------------
+
+The anganyAI fork, on top of 0.10.2: what an ICE session needs to hold a call
+with a relay that redirects and restarts.
+
+ * Add :meth:`Connection.restart` to restart ICE with new remote credentials and
+   candidates, keeping the local transports and TURN allocations.
+ * Add :meth:`Connection.update_remote_credentials` to change the remote
+   ufrag/pwd without a restart.
+ * Add :meth:`Connection.set_ice_controlling` to override the ICE role.
+ * Add a `nomination_strategy` parameter to :class:`Connection`, `"aggressive"`
+   (the default) or `"regular"`.
+ * Follow a TURN server's 300 Try Alternate answer, up to five redirects.
+ * Gather no host or server-reflexive candidates under
+   :attr:`TransportPolicy.RELAY`.
+ * Nominate an ICE-lite peer's pair without a USE-CANDIDATE round trip.
+ * Log each received packet at DEBUG instead of INFO.
+
 0.10.2
 ------
 
