@@ -501,8 +501,17 @@ class IceConnectionTest(unittest.TestCase):
 
         await self.connect_and_exchange_data(conn_a, conn_b)
 
-    @asynctest
-    async def test_connect_to_ice_lite_nomination_fails(self) -> None:
+    async def assertNominatesIceLitePeer(
+        self,
+        nomination_received: Callable[
+            [ice.Connection, stun.Message, tuple[str, int], ice.StunProtocol], None
+        ],
+    ) -> None:
+        """
+        The controlling agent nominates an ICE-lite peer's pair on its own: what
+        the peer does with the nominating check does not decide the pair.
+        """
+
         def mock_request_received(
             self: ice.Connection,
             message: stun.Message,
@@ -511,7 +520,7 @@ class IceConnectionTest(unittest.TestCase):
             raw_data: bytes,
         ) -> None:
             if "USE-CANDIDATE" in message.attributes:
-                self.respond_error(message, addr, protocol, (500, "Internal Error"))
+                nomination_received(self, message, addr, protocol)
             else:
                 self.real_request_received(message, addr, protocol, raw_data)  # type: ignore
 
@@ -524,14 +533,31 @@ class IceConnectionTest(unittest.TestCase):
         # invite / accept
         await invite_accept(conn_a, conn_b)
 
-        # connect
-        with self.assertRaises(ConnectionError) as cm:
-            await asyncio.gather(conn_a.connect(), conn_b.connect())
-        self.assertEqual(str(cm.exception), "ICE negotiation failed")
+        # a connects and can send, which needs a nominated pair; b, never
+        # nominated, waits until it is closed
+        connect_b = asyncio.ensure_future(conn_b.connect())
+        await conn_a.connect()
+        await conn_a.send(b"howdee")
 
         # close
         await conn_a.close()
         await conn_b.close()
+        with self.assertRaises(ConnectionError):
+            await connect_b
+
+    @asynctest
+    async def test_connect_to_ice_lite_nomination_refused(self) -> None:
+        await self.assertNominatesIceLitePeer(
+            lambda conn, message, addr, protocol: conn.respond_error(
+                message, addr, protocol, (500, "Internal Error")
+            )
+        )
+
+    @asynctest
+    async def test_connect_to_ice_lite_nomination_unanswered(self) -> None:
+        await self.assertNominatesIceLitePeer(
+            lambda conn, message, addr, protocol: None
+        )
 
     @unittest.skipIf(RUNNING_ON_CI, "CI lacks ipv6")
     @asynctest

@@ -1003,8 +1003,14 @@ class Connection:
             # nominated by agressive nomination or the remote party
             pair.nominated = True
         elif self.remote_is_lite and self.ice_controlling:
-            # ICE-lite servers don't reliably respond to USE-CANDIDATE.
-            # Nominate locally without a second STUN round-trip.
+            # An ICE-lite peer may leave the nominating check unanswered, which
+            # would fail a pair it has already answered: nominate it here, and
+            # send the nominating check once without waiting, so a peer that
+            # waits for USE-CANDIDATE gets it.
+            self.__log_info("Check %s nominating pair", pair)
+            request = self.build_request(pair, nominate=True)
+            request.add_message_integrity(self.remote_password.encode("utf8"))
+            pair.protocol.send_stun(request, pair.remote_addr)
             pair.nominated = True
         elif self.ice_controlling and pair.component not in self._nominating:
             # perform regular nomination
