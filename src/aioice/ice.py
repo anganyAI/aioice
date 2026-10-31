@@ -660,7 +660,9 @@ class Connection:
         while not self._queue.empty():
             self._queue.get_nowait()
 
-    def update_remote_credentials(self, remote_username: str, remote_password: str) -> None:
+    def update_remote_credentials(
+        self, remote_username: str, remote_password: str
+    ) -> None:
         """
         Update the remote ICE credentials without restarting ICE.
 
