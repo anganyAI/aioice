@@ -3,6 +3,13 @@ Changelog
 
 .. currentmodule:: aioice
 
+0.10.2+angany.2
+---------------
+
+ * Send the nominating check to an ICE-lite peer, without waiting for its
+   answer: a peer that waits for USE-CANDIDATE completes, and one that refuses
+   or ignores it still leaves the pair nominated.
+
 0.10.2+angany.1
 ---------------
 
