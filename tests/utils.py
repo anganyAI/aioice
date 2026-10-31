@@ -14,6 +14,11 @@ from aioice import ice
 
 P = ParamSpec("P")
 
+# GitHub's macOS runners block the multicast an mDNS resolution needs.
+MULTICAST_BLOCKED = (
+    os.environ.get("GITHUB_ACTIONS") == "true" and sys.platform == "darwin"
+)
+
 
 def asynctest(
     coro: Callable[P, Coroutine[None, None, None]],

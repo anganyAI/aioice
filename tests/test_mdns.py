@@ -5,7 +5,7 @@ from typing import AsyncGenerator
 
 from aioice import mdns
 
-from .utils import asynctest
+from .utils import MULTICAST_BLOCKED, asynctest
 
 
 @contextlib.asynccontextmanager
@@ -47,6 +47,7 @@ class MdnsTest(unittest.TestCase):
             )
             self.assertEqual(result, [None, None])
 
+    @unittest.skipIf(MULTICAST_BLOCKED, "macOS runners block multicast")
     @asynctest
     async def test_resolve_good_ipv4(self) -> None:
         hostaddr = "1.2.3.4"
@@ -58,6 +59,7 @@ class MdnsTest(unittest.TestCase):
             result = await querier.resolve(hostname)
             self.assertEqual(result, hostaddr)
 
+    @unittest.skipIf(MULTICAST_BLOCKED, "macOS runners block multicast")
     @asynctest
     async def test_resolve_good_ipv6(self) -> None:
         hostaddr = "::ffff:1.2.3.4"
@@ -79,6 +81,7 @@ class MdnsTest(unittest.TestCase):
             )
             self.assertEqual(results, [None, None])
 
+    @unittest.skipIf(MULTICAST_BLOCKED, "macOS runners block multicast")
     @asynctest
     async def test_resolve_simultaneous_good(self) -> None:
         hostaddr = "1.2.3.4"

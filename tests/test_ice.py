@@ -11,7 +11,7 @@ import ifaddr
 from aioice import Candidate, TransportPolicy, ice, mdns, stun
 
 from .turnserver import run_turn_server
-from .utils import asynctest, invite_accept
+from .utils import MULTICAST_BLOCKED, asynctest, invite_accept
 
 RUNNING_ON_CI = os.environ.get("GITHUB_ACTIONS") == "true"
 
@@ -1179,6 +1179,7 @@ class IceConnectionTest(unittest.TestCase):
         # close
         await conn_a.close()
 
+    @unittest.skipIf(MULTICAST_BLOCKED, "macOS runners block multicast")
     @asynctest
     async def test_add_remote_candidate_mdns_good(self) -> None:
         """
